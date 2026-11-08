@@ -141,6 +141,7 @@ def build_atlassian_provider(settings: Settings) -> OAuthProxy:
         client_storage=_client_storage(settings),
         jwt_signing_key=atlassian.jwt_signing_key.get_secret_value() or None,
         require_authorization_consent=True if atlassian.consent == "always" else "remember",
+        enable_cimd=atlassian.enable_cimd,
         # Refresh Atlassian's one-hour access token before it expires instead of failing a call first.
         token_expiry_threshold_seconds=VERIFY_CACHE_TTL_S,
     )

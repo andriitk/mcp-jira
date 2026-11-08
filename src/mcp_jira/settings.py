@@ -79,6 +79,10 @@ class AtlassianSettings(BaseSettings):
     Empty = any (fine on localhost; set it for a shared deployment)."""
     jwt_signing_key: SecretStr = Field(alias="JWT_SIGNING_KEY", default=SecretStr(""))
     """Signs tokens issued to MCP clients. Empty = derived from the client secret."""
+    enable_cimd: bool = Field(alias="OAUTH_ENABLE_CIMD", default=False)
+    """Accept URL client IDs (Client ID Metadata Documents). Off by default: the server must then fetch
+    the client's metadata from the internet (e.g. claude.ai), which bot protection may block. With it
+    off, clients use dynamic client registration, which every MCP client supports."""
 
     @field_validator("site_url")
     @classmethod

@@ -106,6 +106,7 @@ just down acme      # stop (OAuth state is kept in its volume)
 | `BASE_API_PATH` | | Mount prefix behind a shared ingress, e.g. `/api/jira` |
 | `ALLOWED_CLIENT_REDIRECT_URIS` | any | Comma-separated MCP client callback patterns, e.g. `http://localhost:*,https://claude.ai/*` |
 | `OAUTH_CONSENT` | `always` | `always` shows the consent screen on every client authorization; `remember` skips it for approved clients |
+| `OAUTH_ENABLE_CIMD` | `false` | Accept URL client IDs (Client ID Metadata Documents). Off: clients use dynamic registration, which does not depend on fetching the client's metadata from the internet |
 | `JWT_SIGNING_KEY` | derived | Signs tokens issued to MCP clients; set explicitly in production |
 | `OAUTH_REDIS_URL` | | Shared OAuth state for several replicas (encrypted) |
 | `OAUTH_STORAGE_ENCRYPTION_KEY` | | Fernet key, required with `OAUTH_REDIS_URL` |

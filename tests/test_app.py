@@ -60,6 +60,15 @@ async def test_mcp_requires_oauth_and_advertises_discovery(app_with):
     meta = await request(app, "GET", "/.well-known/oauth-authorization-server")
     assert meta.status_code == 200
     assert meta.json()["authorization_endpoint"] == "http://localhost:8711/authorize"
+    # Clients register dynamically; URL client IDs (CIMD) are off unless enabled.
+    assert meta.json()["registration_endpoint"] == "http://localhost:8711/register"
+    assert not meta.json().get("client_id_metadata_document_supported")
+
+
+async def test_cimd_can_be_enabled(app_with):
+    app = app_with({**OAUTH_ENV, "OAUTH_ENABLE_CIMD": "true"})
+    meta = await request(app, "GET", "/.well-known/oauth-authorization-server")
+    assert meta.json()["client_id_metadata_document_supported"] is True
 
 
 async def raw_status(app, host: str) -> int:
