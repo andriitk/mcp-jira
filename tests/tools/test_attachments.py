@@ -68,3 +68,10 @@ def test_corrupt_image_degrades_to_a_message():
 def test_safe_filename_strips_paths_and_odd_characters():
     assert safe_filename("../../etc/passwd") == "passwd"
     assert safe_filename("Screen Shot 2026-11-01 at 10.00.png") == "Screen_Shot_2026-11-01_at_10.00.png"
+
+
+def test_gif_with_too_many_frames_falls_back_to_the_first(monkeypatch):
+    monkeypatch.setattr("mcp_jira.tools.jira.attachments.MAX_GIF_FRAMES", 5)
+    out = describe(meta("bomb.gif", "image/gif"), gif_bytes(10), None, max_frames=4)
+    assert "too many to sample" in out[0].text
+    assert kinds(out).count("image") == 1

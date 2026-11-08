@@ -5,6 +5,8 @@ Each tool is one plain function; the Jira client arrives through `Depends()`, bo
 caller, and is stripped from the tool schema.
 """
 
+import asyncio
+
 from fastmcp.dependencies import Depends
 from fastmcp.exceptions import ToolError
 
@@ -84,7 +86,15 @@ async def get_attachment(
         path = attachments.save(meta, data, settings.downloads.directory)
         host_dir = settings.downloads.host_directory.rstrip("/")
         saved_at = f"{host_dir}/{path.name}" if host_dir else str(path)
-    return attachments.describe(meta, data, saved_at, max_frames)
+    # Decoding is CPU-bound: keep it off the event loop so other requests are served meanwhile.
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(attachments.describe, meta, data, saved_at, max_frames),
+            timeout=attachments.PREVIEW_TIMEOUT_S,
+        )
+    except TimeoutError as exc:
+        where = f"; the file is saved at {saved_at}" if saved_at else "; open it in Jira"
+        raise ToolError(f"Preview of {meta.filename} took too long{where}.") from exc
 
 
 async def search_issues(

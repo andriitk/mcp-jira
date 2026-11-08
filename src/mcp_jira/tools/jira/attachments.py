@@ -19,6 +19,8 @@ from mcp_types import ImageContent, TextContent
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 MAX_DOWNLOAD_BYTES = 150_000_000
+MAX_GIF_FRAMES = 5_000
+PREVIEW_TIMEOUT_S = 60.0
 MAX_IMAGE_SIDE = 1568
 JPEG_QUALITY = 85
 TEXT_LIMIT = 40_000
@@ -122,18 +124,21 @@ def _sample(count: int, wanted: int) -> list[int]:
 def gif_frames(data: bytes, max_frames: int) -> tuple[str, list[Content]]:
     with Image.open(io.BytesIO(data)) as img:
         total = getattr(img, "n_frames", 1)
+        size = f"{img.width}x{img.height}"
         if total == 1:
-            return f"{img.width}x{img.height} still GIF", [_jpeg(img)]
-        durations = []
-        for i in range(total):
-            img.seek(i)
-            durations.append(img.info.get("duration", 100) / 1000)
-        starts = [sum(durations[:i]) for i in range(total)]
+            return f"{size} still GIF", [_jpeg(img)]
+        if total > MAX_GIF_FRAMES:
+            return f"{size} animated GIF, {total} frames (too many to sample; first frame only)", [_jpeg(img)]
+        # One sequential pass: GIF frames decode in order anyway, and timestamps are a running total.
+        wanted = set(_sample(total, max_frames))
         out: list[Content] = []
-        for index in _sample(total, max_frames):
+        elapsed = 0.0
+        for index in range(total):
             img.seek(index)
-            out += [TextContent(type="text", text=f"Frame at {starts[index]:.1f}s"), _jpeg(img.copy())]
-        return f"{img.width}x{img.height} animated GIF, {total} frames, {sum(durations):.1f}s", out
+            if index in wanted:
+                out += [TextContent(type="text", text=f"Frame at {elapsed:.1f}s"), _jpeg(img.copy())]
+            elapsed += img.info.get("duration", 100) / 1000
+        return f"{size} animated GIF, {total} frames, {elapsed:.1f}s", out
 
 
 def video_frames(data: bytes, max_frames: int) -> tuple[str, list[Content]]:
@@ -178,7 +183,7 @@ def describe(meta: AttachmentMeta, data: bytes, saved_at: str | None, max_frames
                 info, body = "text", [TextContent(type="text", text=text[:TEXT_LIMIT] + cut)]
             case _:
                 info, body = f"no inline preview for this type; {elsewhere}", []
-    except (UnidentifiedImageError, av.FFmpegError, OSError, IndexError) as exc:
+    except (UnidentifiedImageError, Image.DecompressionBombError, av.FFmpegError, OSError, IndexError) as exc:
         logger.warning(f"Could not preview attachment {meta.id} ({meta.mime_type}): {exc}")
         info, body = f"preview failed ({exc}); {elsewhere}", []
     return [TextContent(type="text", text=f"{header}\n{info}"), *body]
