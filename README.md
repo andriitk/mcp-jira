@@ -1,169 +1,236 @@
+<div align="center">
+
 # mcp-jira
 
-A lightweight Jira Cloud MCP server for agent harnesses. It lets an agent **read a task properly** (fields,
-description, comments, and the screenshots, GIFs and videos attached to it), **report back** with a comment,
-and **create issues** when asked. It cannot edit, transition or delete anything.
+**A lightweight Jira Cloud MCP server for your local agent harness.**
 
-- **Per-user OAuth 2.0.** Each person signs in with their own Atlassian account in the browser; the agent
-  sees exactly what that person may see. No API tokens in config files.
-- **One container per Jira site.** Work with several organisations side by side: run one instance per site,
-  each under its own name, and the agent picks the right one.
-- **Runs anywhere.** The same image runs on a laptop behind `localhost` or behind a TLS proxy for a team,
-  with shared OAuth state in Redis for several replicas.
-- **Small surface.** Six tools, about 1.4k tokens of definitions.
+Your agent reads the task (including its screenshots and videos), does the work, and reports back on the ticket.
+Each person signs in with their own Atlassian account. Nothing in Jira can be edited or deleted.
 
-## Tools
+[![CI](https://github.com/andriitk/mcp-jira/actions/workflows/ci.yml/badge.svg)](https://github.com/andriitk/mcp-jira/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.14%20%7C%203.15-3776AB?logo=python&logoColor=white)
+![MCP](https://img.shields.io/badge/MCP-Streamable%20HTTP-6E56CF)
+![Docker](https://img.shields.io/badge/runs%20in-Docker-2496ED?logo=docker&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-| Tool | Access | What it does |
-|---|---|---|
-| `get_issue` | read | Issue as Markdown: fields, description, non-empty custom fields (acceptance criteria, sprint, ...), subtasks, links, attachment list, comments |
-| `get_attachment` | read | Images inline; videos and animated GIFs as timestamped frames; text files as text. Locally, also saved to disk for other tools (PDFs, archives) |
-| `search_issues` | read | JQL search, one line per issue |
-| `whoami` | read | Which site and account this instance acts as |
-| `add_comment` | write | Comment from Markdown (lists, code, links), returns a direct link |
-| `create_issue` | write | New issue from Markdown; type, labels, priority, parent, assign to self |
+[Quick start](#quick-start) · [Tools](#tools) · [Several Jira sites](#several-jira-sites) · [Configuration](#configuration) · [Deploying](#beyond-localhost) · [Security](#security)
 
-A typical request: *"Read ABC-123, implement it, open a pull request and leave the PR link as a comment on the task."*
+</div>
+
+---
+
+> **Built for a local harness.** mcp-jira runs as a small container next to your agent and is reached on
+> `localhost`. The same image also runs as a standalone service on any cloud. Going from laptop to team service
+> takes infrastructure changes only: a TLS endpoint and shared, encrypted state in Redis or DynamoDB, both built in.
+> See [Beyond localhost](#beyond-localhost).
+
+## Why
+
+Agents are good at coding against a ticket, but only if they can actually *read* it: the description, acceptance
+criteria, comment thread, and the screenshot or screen recording that shows the bug. mcp-jira gives them that with
+a deliberately small surface:
+
+- 🔐 **Per-user OAuth 2.0.** You approve access in the browser through your normal Atlassian login (SSO works). There
+  are no API tokens in config files, and every call carries your own Jira permissions.
+- 🖼️ **Sees attachments.** Images arrive inline. Videos and GIFs arrive as timestamped frames. Logs and other text
+  files arrive as text.
+- 🛡️ **Safe by design.** The agent can read, comment and create issues. It cannot edit, transition or delete anything.
+- 🏢 **One instance per Jira site.** If you work across organisations, each site gets its own container and its own
+  sign-in, and the agent knows which is which.
+- 🪶 **Lightweight.** Six tools and about 1.4k tokens of tool definitions. No database is needed for local use.
 
 ## How it works
 
 ```mermaid
-sequenceDiagram
-    participant A as Agent (Claude Code, ...)
-    participant M as mcp-jira (one per site)
-    participant At as Atlassian
-    A->>M: connect /mcp (401 + OAuth metadata)
-    A->>M: register, authorize (PKCE)
-    M->>At: redirect to Atlassian login (your SSO)
-    At-->>M: code -> access + refresh token (stored encrypted)
-    M-->>A: token for this server
-    A->>M: tools/call get_issue
-    M->>At: Jira REST v3 as the signed-in user
+flowchart LR
+    subgraph harness["Your machine / agent harness"]
+        agent["AI agent<br/>(Claude Code, any MCP client)"]
+    end
+    subgraph server["mcp-jira container"]
+        mcp["MCP endpoint<br/>/mcp"]
+        oauth["OAuth server<br/>for MCP clients"]
+        tools["Tools<br/>read · comment · create"]
+        store[("Encrypted<br/>OAuth state")]
+    end
+    subgraph atlassian["Atlassian Cloud"]
+        idp["Atlassian login<br/>(your SSO)"]
+        jira["Jira REST API"]
+    end
+    agent -- "MCP over HTTP" --> mcp
+    agent -. "sign in (browser)" .-> oauth
+    oauth -. "OAuth 2.0 (3LO)" .-> idp
+    oauth --- store
+    mcp --> tools
+    tools -- "as the signed-in user" --> jira
 ```
 
-The server is an OAuth authorization server towards MCP clients and an OAuth client towards Atlassian
-(built on FastMCP's `OAuthProxy`). Atlassian's one-hour access tokens and rotating refresh tokens are
-refreshed transparently; the MCP client never sees them.
+To your MCP client, mcp-jira is an OAuth-protected server. To Atlassian, it is an OAuth app. Your Atlassian tokens
+never leave the server: they are stored encrypted and refreshed automatically, and the client only holds a token for
+mcp-jira itself. The full flow is described in [docs/authentication.md](docs/authentication.md).
 
-## Quick start (local, Docker)
+## Tools
 
-Requirements: Docker, [`just`](https://github.com/casey/just), and an MCP client such as Claude Code.
+| Tool | Access | Description |
+|---|:---:|---|
+| `get_issue` | read | The issue as Markdown: fields, description, filled-in custom fields (acceptance criteria, sprint, …), subtasks, links, attachment list and comments |
+| `get_attachment` | read | Shows an attachment: images inline, videos and animated GIFs as timestamped frames, text files as text |
+| `search_issues` | read | JQL search, one compact line per issue |
+| `whoami` | read | Which Jira site and account this instance acts as |
+| `add_comment` | write | Posts a comment written in Markdown (headings, lists, code, links) and returns a direct link to it |
+| `create_issue` | write | Creates an issue: Markdown description, type, labels, priority, parent, optional self-assignment |
 
-**1. Create an Atlassian OAuth app** at <https://developer.atlassian.com/console/myapps/>, signed in with the
-account you use for that Jira site:
+A typical request:
 
-1. *Create* -> *OAuth 2.0 integration*.
-2. *Permissions* -> *Jira API* -> *Add*, then *Configure* -> classic scopes `read:jira-work`, `write:jira-work`,
-   `read:jira-user`.
-3. *Authorization* -> *OAuth 2.0 (3LO)* -> callback URL `http://localhost:8711/auth/callback`
-   (the port you will publish this instance on).
-4. *Settings* -> copy the client ID and secret.
+> *Read ABC-123, implement it, open a pull request, and leave the PR link as a comment on the ticket.*
 
-**2. Create the instance config.** It lives outside the repository, in `~/.config/mcp-jira/<name>.env`:
+## Quick start
+
+**Prerequisites:** Docker, [`just`](https://github.com/casey/just), an MCP client with OAuth support (for example,
+[Claude Code](https://code.claude.com)).
+
+### 1. Create an Atlassian OAuth app
+
+Open the [Atlassian developer console](https://developer.atlassian.com/console/myapps/), signed in with the account
+you use for the Jira site.
+
+1. **Create → OAuth 2.0 integration**, access type **Resource-level**.
+2. **Permissions → Jira API → Add → Configure → Classic scopes**: `read:jira-work`, `write:jira-work`, `read:jira-user`.
+3. **Authorization → OAuth 2.0 (3LO)**: callback URL `http://localhost:8711/auth/callback` (use the port you will publish).
+4. **Settings**: copy the client ID and the secret.
+
+### 2. Configure and start an instance
+
+Instance configuration lives outside the repository, in `~/.config/mcp-jira/<name>.env` (mode `0600`):
 
 ```bash
-just init acme 8711
+git clone https://github.com/andriitk/mcp-jira.git && cd mcp-jira
+
+just init acme 8711                   # creates ~/.config/mcp-jira/acme.env
 $EDITOR ~/.config/mcp-jira/acme.env   # JIRA_SITE_URL, ATLASSIAN_CLIENT_ID, ATLASSIAN_CLIENT_SECRET
+just up acme                          # builds the image and starts it on 127.0.0.1:8711
 ```
 
-**3. Start it:**
+### 3. Connect your agent and sign in
 
 ```bash
-just up acme        # builds the image, starts mcp-jira-acme on 127.0.0.1:8711, waits until healthy
+claude mcp add --transport http jira-acme http://localhost:8711/mcp
 ```
 
-**4. Connect your agent and sign in.** For Claude Code:
+In Claude Code, run `/mcp`, select `jira-acme`, and choose **Authenticate**. In the browser, approve the
+connection, log in to Atlassian, and accept access for your site. Your session survives restarts.
+
+Other MCP clients work the same way: point them at `http://localhost:<port>/mcp`, and they discover the sign-in
+flow automatically. See [docs/clients.md](docs/clients.md).
+
+## Several Jira sites
+
+Run one instance per site. They share one image and differ only in their env files.
+
+```mermaid
+flowchart LR
+    subgraph projects["Projects on your machine"]
+        p1["~/work/acme/*"]
+        p2["~/work/globex/*"]
+    end
+    subgraph containers["Same image, two instances"]
+        i1["jira-acme<br/>127.0.0.1:8711"]
+        i2["jira-globex<br/>127.0.0.1:8712"]
+    end
+    s1["acme.atlassian.net"]
+    s2["globex.atlassian.net"]
+    p1 --> i1 --> s1
+    p2 --> i2 --> s2
+```
 
 ```bash
-claude mcp add --transport http --scope user jira-acme http://localhost:8711/mcp
+just init globex 8712 && $EDITOR ~/.config/mcp-jira/globex.env && just up globex
 ```
 
-Then run `/mcp` in Claude Code, choose `jira-acme`, *Authenticate*: the browser opens, you approve the
-connection, log in to Atlassian (SSO works as usual) and accept. Done; the session survives restarts.
+Each instance announces which organisation it belongs to (`JIRA_INSTANCE_NAME`, optional `JIRA_AGENT_HINT`) and
+rejects tokens issued for any other site. To show an instance only in the projects where it belongs, register it
+per project rather than globally; [docs/clients.md](docs/clients.md#one-site-per-project) shows how.
 
-### Several Jira sites
-
-Repeat steps 1-4 with another name and port, e.g. `just init globex 8712`, its own Atlassian app with callback
-`http://localhost:8712/auth/callback`, and `claude mcp add ... jira-globex http://localhost:8712/mcp`. Sign in to
-each with the right account. Each instance tells the agent which organisation it belongs to
-(`JIRA_INSTANCE_NAME`, optional `JIRA_AGENT_HINT` such as "repositories under ~/work/globex").
-
-```bash
-just ps             # running instances
-just logs acme      # follow one
-just down acme      # stop (OAuth state is kept in its volume)
-```
+| Command | What it does |
+|---|---|
+| `just ps` | List running instances |
+| `just logs <name>` | Follow an instance's log |
+| `just down <name>` | Stop an instance; its sign-ins are kept |
+| `just up <name>` | Start or update an instance |
 
 ## Configuration
 
+All settings are environment variables. See [`.env.example`](.env.example).
+
 | Variable | Default | Purpose |
 |---|---|---|
+| **Instance** | | |
 | `JIRA_SITE_URL` | required | `https://<site>.atlassian.net`; tokens for other sites are rejected |
-| `ATLASSIAN_CLIENT_ID`, `ATLASSIAN_CLIENT_SECRET` | required | The OAuth 2.0 (3LO) app |
-| `JIRA_INSTANCE_NAME` | `Jira` | Label the agent sees |
-| `JIRA_AGENT_HINT` | | Extra instructions: when to use this instance |
+| `ATLASSIAN_CLIENT_ID` / `ATLASSIAN_CLIENT_SECRET` | required | The OAuth 2.0 (3LO) app |
+| `JIRA_INSTANCE_NAME` | `Jira` | Label shown to the agent |
+| `JIRA_AGENT_HINT` | | Extra guidance for the agent, e.g. when to use this instance |
+| **Network & OAuth** | | |
 | `BASE_URL` | `http://localhost:8000` | Public URL of the server; OAuth redirects are built from it |
 | `BASE_API_PATH` | | Mount prefix behind a shared ingress, e.g. `/api/jira` |
-| `ALLOWED_CLIENT_REDIRECT_URIS` | any | Comma-separated MCP client callback patterns, e.g. `http://localhost:*,https://claude.ai/*` |
-| `OAUTH_CONSENT` | `always` | `always` shows the consent screen on every client authorization; `remember` skips it for approved clients |
-| `OAUTH_ENABLE_CIMD` | `false` | Accept URL client IDs (Client ID Metadata Documents). Off: clients use dynamic registration, which does not depend on fetching the client's metadata from the internet |
-| `JWT_SIGNING_KEY` | derived | Signs tokens issued to MCP clients; set explicitly in production |
-| `OAUTH_REDIS_URL` | | Shared OAuth state for several replicas (encrypted) |
-| `OAUTH_STORAGE_ENCRYPTION_KEY` | | Fernet key, required with `OAUTH_REDIS_URL` |
-| `DOWNLOADS_DIR`, `HOST_DOWNLOADS_DIR` | | Save attachments where a local agent can open them (`just up` sets these) |
-| `ENVIRONMENT` | `local` | Anything else switches to JSON logs |
-| `LOG_LEVEL` | `info` | |
+| `ALLOWED_CLIENT_REDIRECT_URIS` | any | Comma-separated callback patterns for MCP clients |
+| `OAUTH_CONSENT` | `always` | `always`: show the consent screen for every client authorization; `remember`: skip it for approved clients |
+| `OAUTH_ENABLE_CIMD` | `false` | Accept URL-based client IDs (Client ID Metadata Documents) in addition to dynamic registration |
+| `JWT_SIGNING_KEY` | derived | Signs the tokens issued to MCP clients; set explicitly in production |
+| **State** | | |
+| `OAUTH_STORAGE` | `file` | `file`, `redis`, or `dynamodb` |
+| `OAUTH_STORAGE_ENCRYPTION_KEY` | | Fernet key; required for `redis` and `dynamodb` |
+| `OAUTH_REDIS_URL` | | `redis://` or `rediss://` |
+| `OAUTH_DYNAMODB_TABLE` / `_REGION` / `_ENDPOINT_URL` | `mcp-jira-oauth` | DynamoDB table; created on first use if missing |
+| **Local conveniences** | | |
+| `DOWNLOADS_DIR` / `HOST_DOWNLOADS_DIR` | | Also save attachments where a local agent can open them (`just up` sets these) |
+| `ENVIRONMENT` / `LOG_LEVEL` | `local` / `info` | Any `ENVIRONMENT` other than `local` switches to JSON logs |
 
-See [`.env.example`](.env.example).
+## Beyond localhost
 
-## Deploying for a team
+The container is production-shaped: it runs as non-root, works with a read-only root filesystem, exposes a health
+check at `/health`, and is stateless when backed by shared storage.
 
-The runtime image is self-contained (non-root, read-only filesystem friendly, health check at `/health`).
+```mermaid
+flowchart LR
+    clients["Agents of your team"] -- HTTPS --> lb["TLS proxy / load balancer<br/>jira-mcp.example.com"]
+    lb --> r1["mcp-jira replica"]
+    lb --> r2["mcp-jira replica"]
+    r1 & r2 --> state[("Redis or DynamoDB<br/>encrypted OAuth state")]
+    r1 & r2 --> jira["Jira Cloud"]
+```
 
-1. Run it behind TLS, e.g. `https://jira-mcp.example.com`, and set `BASE_URL` to that URL. If the proxy sets
-   `X-Forwarded-*`, set uvicorn's `FORWARDED_ALLOW_IPS` to the proxy address.
-2. Add `https://jira-mcp.example.com/auth/callback` to the Atlassian app, and enable *Distribution* there so
-   accounts other than the app owner can authorize it.
-3. Set `JWT_SIGNING_KEY` and restrict `ALLOWED_CLIENT_REDIRECT_URIS` to the clients you support.
-4. One replica: mount a volume at `/data`. Several replicas: set `OAUTH_REDIS_URL` and
-   `OAUTH_STORAGE_ENCRYPTION_KEY` (the image includes the Redis extra).
-5. Leave `DOWNLOADS_DIR` unset: remote agents receive previews inline and open originals in Jira.
+| Target | Status | What changes |
+|---|---|---|
+| Laptop / local harness | ✅ Ready | `just up` |
+| Single VM (EC2, Compute Engine, …) | ✅ Ready | TLS proxy in front, `BASE_URL`, a volume for `/data` |
+| Containers (ECS/Fargate, Kubernetes, Cloud Run) | ✅ Ready | Plus `OAUTH_STORAGE=redis` or `dynamodb` for several replicas |
+| Serverless (AWS Lambda) | 🧩 Adapter needed | Run the image with the AWS Lambda Web Adapter and `OAUTH_STORAGE=dynamodb` |
 
-## Security model
+The step-by-step guide, including the Atlassian app settings for a shared deployment, is in
+[docs/deployment.md](docs/deployment.md).
 
-- Every call runs as the signed-in user with Atlassian's own permission checks; there is no shared account.
-- A token is accepted only if Atlassian confirms it grants the Jira scopes on the configured site.
-- No update, transition or delete tools. Writes are limited to adding comments and creating issues, and both
-  are marked as writes so clients can ask for confirmation.
-- Host/Origin validation on every request (DNS-rebinding protection); `just up` publishes on `127.0.0.1` only.
-- OAuth state is encrypted at rest (local files or Redis). Instance configs and downloads live outside the
-  repository.
+## Security
 
-Report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
+- **Your identity, your permissions.** Every Jira call runs as the signed-in user; there is no shared service account.
+- **Site-pinned tokens.** A token is accepted only if Atlassian confirms it grants the Jira scopes on the configured site.
+- **No destructive tools.** Writes are limited to adding comments and creating issues, and both are annotated as
+  writes, so clients can ask for confirmation.
+- **Encrypted state.** OAuth state is encrypted at rest, in local files or in Redis/DynamoDB.
+- **Hardened by default.** Every request has its Host and Origin validated (DNS-rebinding protection). `just up`
+  publishes on `127.0.0.1` only, and the container drops all Linux capabilities.
+- **Nothing private in git.** Instance configs and downloaded attachments live outside the repository.
+
+Please report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
 
 ## Development
 
 ```bash
-just tests     # ruff check, ruff format --check, pytest with coverage (in Docker, Python 3.15)
-just lint      # apply ruff fixes and formatting
+just tests     # lint, format check and tests in Docker (Python 3.15)
+just lint      # apply lint fixes and formatting
 just lock      # refresh uv.lock
 ```
 
-```
-src/mcp_jira/
-├── app.py            FastMCP server + ASGI app factories, /health
-├── asgi.py           ASGI entry point (uvicorn --factory)
-├── containers.py     dependency-injector container, auth wiring, bootstrap()
-├── settings.py       pydantic-settings, grouped by concern
-├── auth/atlassian.py Atlassian OAuthProxy + token verifier
-├── misc/             DI bridge for FastMCP Depends(), lifespan, logging
-└── tools/
-    ├── __init__.py   the registry of exposed tools
-    └── jira/         client, tools, schemas, ADF <-> Markdown, attachment previews, rendering
-```
-
-`tests/test_mcp.py` snapshots every tool schema: it is the contract MCP clients see. After an intentional
-change, run `pytest tests/test_mcp.py --inline-snapshot=fix` and read the diff.
+The tool schemas are snapshot-tested, because they are the contract MCP clients rely on. Contributions are
+welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
