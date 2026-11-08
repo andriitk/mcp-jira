@@ -1,0 +1,103 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mcp-jira"
+version = "0.1.0"
+description = "A lightweight Jira Cloud MCP server for agent harnesses: read issues and their attachments, comment, create. Per-user OAuth, one container per Jira site, runs locally or anywhere."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Andrii Tkachuk" }]
+requires-python = ">=3.14"
+keywords = ["mcp", "model-context-protocol", "jira", "atlassian", "claude-code", "agents", "oauth"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: Software Development :: Bug Tracking",
+]
+dependencies = [
+    "fastmcp-slim[server]>=4.1.6,<5",
+    "httpx2>=2.16",
+    "pydantic>=2.14",
+    "pydantic-settings>=2.14",
+    "dependency-injector>=4.49",
+    "uvicorn>=0.54",
+    "loguru>=0.7.3",
+    "cryptography>=50",
+    "pillow>=13",
+    "av>=19",
+]
+
+[project.optional-dependencies]
+# Shared OAuth state for several replicas.
+redis = ["py-key-value-aio[redis]>=0.4.6"]
+
+[project.urls]
+Repository = "https://github.com/andriitk/mcp-jira"
+Issues = "https://github.com/andriitk/mcp-jira/issues"
+
+[project.scripts]
+mcp-jira = "mcp_jira.__main__:run"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2",
+    "pytest-asyncio>=1.4",
+    "pytest-cov>=7",
+    # Tool schemas are the contract MCP clients see; refresh deliberately: pytest --inline-snapshot=fix
+    "inline-snapshot>=0.36",
+    "ruff>=0.17",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_jira"]
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+pythonpath = ["src"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = ["--cov", "--cov-report=term-missing", "--cov-fail-under=80", "--tb=short", "-q"]
+
+[tool.coverage.run]
+source_pkgs = ["mcp_jira"]
+data_file = "/tmp/.mcp-jira.coverage"
+branch = true
+
+[tool.coverage.report]
+skip_covered = true
+show_missing = true
+exclude_also = ["if TYPE_CHECKING:", "if __name__ == .__main__.:"]
+
+[tool.inline-snapshot]
+format-command = "ruff format --stdin-filename {filename}"
+
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# E/W pycodestyle, F pyflakes, I isort, B bugbear, UP pyupgrade, S bandit, SIM simplify, ASYNC, RUF
+select = ["E", "W", "F", "I", "B", "UP", "S", "SIM", "ASYNC", "RUF", "G"]
+ignore = [
+    "G004",    # f-strings in loguru calls are the house style; G004 targets stdlib logging
+    "RUF001",  # "·" and "…" in rendered Markdown are intentional
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["mcp_jira"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastMCP resolves Depends() per request; it is the framework's injection idiom, not a shared default.
+extend-immutable-calls = ["fastmcp.dependencies.Depends"]

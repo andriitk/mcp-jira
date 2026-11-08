@@ -1,0 +1,29 @@
+# Secrets and per-instance config never live in the repository
+.env
+.env.*
+!.env.example
+*.env
+!.env.example
+
+# Runtime data
+downloads/
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

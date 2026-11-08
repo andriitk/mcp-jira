@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Block commits that contain private strings (organisation names, site URLs, emails, ...).
+# Patterns live OUTSIDE the repository, one extended regex per line:
+#   ${MCP_JIRA_HOME:-~/.config/mcp-jira}/private-patterns
+# Enable once per clone: git config core.hooksPath .githooks
+
+set -euo pipefail
+
+patterns="${MCP_JIRA_HOME:-$HOME/.config/mcp-jira}/private-patterns"
+[ -s "$patterns" ] || exit 0
+
+if git diff --cached --name-only -z --diff-filter=ACMR | xargs -0 -r git grep --cached -n -i -I -E -f "$patterns" -- 2>/dev/null; then
+    echo
+    echo "pre-commit: private strings found (patterns from $patterns). Remove them before committing." >&2
+    exit 1
+fi

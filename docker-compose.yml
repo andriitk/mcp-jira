@@ -1,0 +1,50 @@
+# One container per Jira site. Run several instances side by side with different env files:
+#
+#   just up acme          # reads ~/.config/mcp-jira/acme.env, publishes 127.0.0.1:${MCP_PORT}
+#
+# or directly:
+#
+#   MCP_INSTANCE=acme MCP_PORT=8711 MCP_ENV_FILE=~/.config/mcp-jira/acme.env \
+#     docker compose -p mcp-jira-acme up -d
+#
+# Each instance gets its own project name, so its OAuth state volume is separate.
+
+x-environment: &environment
+  ENVIRONMENT: ${ENVIRONMENT:-local}
+  BASE_URL: http://localhost:${MCP_PORT:-8000}
+  DOWNLOADS_DIR: /downloads
+  HOST_DOWNLOADS_DIR: ${MCP_DOWNLOADS:-./downloads}
+
+x-base: &base
+  image: ${IMAGE_NAME:-mcp-jira:local}
+  build:
+    context: .
+    target: runtime
+
+services:
+  mcp-jira:
+    <<: *base
+    container_name: mcp-jira-${MCP_INSTANCE:-default}
+    env_file:
+      - path: ${MCP_ENV_FILE:-.env}
+        required: false
+    environment: *environment
+    ports:
+      - "127.0.0.1:${MCP_PORT:-8000}:8000"
+    volumes:
+      - oauth-state:/data
+      - ${MCP_DOWNLOADS:-./downloads}:/downloads
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+  test:
+    build:
+      context: .
+      target: test
+    profiles: [dev]
+
+volumes:
+  oauth-state:
