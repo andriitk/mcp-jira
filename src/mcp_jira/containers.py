@@ -92,7 +92,9 @@ def _configure_auth(container: MainContainer, settings: Settings) -> None:
         logger.warning("Atlassian OAuth is not configured: tools will answer 'not signed in'.")
         return
     container.auth_provider.override(Object(build_atlassian_provider(settings)))
-    storage = "Redis" if settings.storage.redis_url.get_secret_value() else "encrypted local files"
+    storage = {"file": "encrypted local files", "redis": "Redis (encrypted)", "dynamodb": "DynamoDB (encrypted)"}[
+        settings.storage.backend
+    ]
     logger.info(f"Per-user Atlassian OAuth enabled for {atlassian.site_url}; OAuth state in {storage}")
 
 

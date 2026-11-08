@@ -16,19 +16,19 @@ WORKDIR /src
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv sync --locked --no-install-project --no-dev --extra redis
+    uv sync --locked --no-install-project --no-dev --extra cloud
 
 COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-dev --no-editable --extra redis
+    uv sync --locked --no-dev --no-editable --extra cloud
 
 
 # ---------- 2. Test: the same environment plus dev tools ----------
 FROM build AS test
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --extra redis
+    uv sync --locked --extra cloud
 
 COPY tests ./tests
 COPY docker ./docker

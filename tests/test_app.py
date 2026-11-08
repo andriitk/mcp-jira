@@ -19,7 +19,7 @@ OAUTH_ENV = {
 @pytest.fixture
 def app_with(monkeypatch):
     def build(env: dict):
-        for key in (*OAUTH_ENV, "OAUTH_REDIS_URL", "OAUTH_STORAGE_ENCRYPTION_KEY"):
+        for key in (*OAUTH_ENV, "OAUTH_STORAGE", "OAUTH_REDIS_URL", "OAUTH_STORAGE_ENCRYPTION_KEY"):
             monkeypatch.delenv(key, raising=False)
         for key, value in env.items():
             monkeypatch.setenv(key, value)
@@ -128,9 +128,17 @@ async def test_partial_credentials_stop_the_boot(app_with):
         app_with({"ATLASSIAN_CLIENT_ID": "cid"})
 
 
-def test_redis_requires_an_encryption_key():
-    with pytest.raises(ValidationError, match="OAUTH_STORAGE_ENCRYPTION_KEY"):
-        Settings.model_validate({"storage": {"OAUTH_REDIS_URL": "redis://r:6379/0"}})
+@pytest.mark.parametrize(
+    "storage,error",
+    [
+        ({"OAUTH_STORAGE": "redis", "OAUTH_REDIS_URL": "redis://r:6379/0"}, "OAUTH_STORAGE_ENCRYPTION_KEY"),
+        ({"OAUTH_STORAGE": "dynamodb"}, "OAUTH_STORAGE_ENCRYPTION_KEY"),
+        ({"OAUTH_STORAGE": "redis", "OAUTH_STORAGE_ENCRYPTION_KEY": "k"}, "OAUTH_REDIS_URL"),
+    ],
+)
+def test_shared_storage_must_be_complete(storage, error):
+    with pytest.raises(ValidationError, match=error):
+        Settings.model_validate({"storage": storage})
 
 
 def test_site_url_is_normalised():

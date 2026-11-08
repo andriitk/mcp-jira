@@ -4,12 +4,15 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx2
 import pytest
+from cryptography.fernet import Fernet
 from fastmcp.exceptions import ToolError
+from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
 
 from mcp_jira.auth.atlassian import (
     RESOURCES_URL,
     AtlassianTokenVerifier,
     build_atlassian_provider,
+    build_client_storage,
     current_caller,
 )
 from mcp_jira.settings import Settings
@@ -96,3 +99,25 @@ async def test_provider_sends_atlassian_specific_authorize_parameters():
     assert query["redirect_uri"] == ["http://localhost:8711/auth/callback"]
     assert set(query["scope"][0].split()) == {*JIRA, "offline_access"}
     assert "code_challenge" not in query  # PKCE stays between the MCP client and this server
+
+
+def test_file_storage_is_fastmcps_default():
+    assert build_client_storage(configured()) is None
+
+
+@pytest.mark.parametrize(
+    "storage,store_class",
+    [
+        ({"OAUTH_STORAGE": "redis", "OAUTH_REDIS_URL": "redis://r:6379/0"}, "RedisStore"),
+        (
+            {"OAUTH_STORAGE": "dynamodb", "OAUTH_DYNAMODB_TABLE": "t", "OAUTH_DYNAMODB_REGION": "eu-west-1"},
+            "DynamoDBStore",
+        ),
+    ],
+)
+def test_shared_storage_is_always_encrypted(storage, store_class):
+    key = Fernet.generate_key().decode()
+    settings = Settings.model_validate({"storage": {**storage, "OAUTH_STORAGE_ENCRYPTION_KEY": key}})
+    wrapper = build_client_storage(settings)
+    assert isinstance(wrapper, FernetEncryptionWrapper)
+    assert type(wrapper.key_value).__name__ == store_class

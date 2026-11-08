@@ -108,21 +108,34 @@ class AtlassianSettings(BaseSettings):
 
 
 class StorageSettings(BaseSettings):
-    """Where OAuth state lives (client registrations, encrypted upstream tokens).
+    """Where OAuth state lives: client registrations and the users' Atlassian tokens.
 
-    Default: encrypted files under FASTMCP_HOME, enough for one container with a volume.
-    Several replicas: point all of them at one Redis.
+    - file: encrypted files under FASTMCP_HOME. One container with a persistent volume (local use, one VM).
+    - redis / dynamodb: shared state for several replicas or serverless; every value is encrypted with
+      OAUTH_STORAGE_ENCRYPTION_KEY before it leaves the process.
     """
 
-    redis_url: SecretStr = Field(alias="OAUTH_REDIS_URL", default=SecretStr(""))
+    backend: Literal["file", "redis", "dynamodb"] = Field(alias="OAUTH_STORAGE", default="file")
     encryption_key: SecretStr = Field(alias="OAUTH_STORAGE_ENCRYPTION_KEY", default=SecretStr(""))
-    """Fernet key; required with OAUTH_REDIS_URL. Generate: python -c 'from cryptography.fernet import
-    Fernet; print(Fernet.generate_key().decode())'"""
+    """Fernet key, required for redis and dynamodb. Generate one with:
+    python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'"""
+    redis_url: SecretStr = Field(alias="OAUTH_REDIS_URL", default=SecretStr(""))
+    """redis://host:6379/0 or rediss:// for TLS."""
+    dynamodb_table: str = Field(alias="OAUTH_DYNAMODB_TABLE", default="mcp-jira-oauth")
+    """Created on first use if missing (needs dynamodb:CreateTable); otherwise create it beforehand."""
+    dynamodb_region: str = Field(alias="OAUTH_DYNAMODB_REGION", default="")
+    """Empty = the AWS SDK default (AWS_REGION, instance metadata, ...)."""
+    dynamodb_endpoint_url: str = Field(alias="OAUTH_DYNAMODB_ENDPOINT_URL", default="")
+    """Only for DynamoDB Local or another compatible endpoint."""
 
     @model_validator(mode="after")
-    def _redis_needs_key(self) -> Self:
-        if self.redis_url.get_secret_value() and not self.encryption_key.get_secret_value():
-            raise ValueError("OAUTH_STORAGE_ENCRYPTION_KEY is required when OAUTH_REDIS_URL is set")
+    def _shared_backends_are_complete(self) -> Self:
+        if self.backend == "file":
+            return self
+        if not self.encryption_key.get_secret_value():
+            raise ValueError(f"OAUTH_STORAGE_ENCRYPTION_KEY is required for OAUTH_STORAGE={self.backend}")
+        if self.backend == "redis" and not self.redis_url.get_secret_value():
+            raise ValueError("OAUTH_REDIS_URL is required for OAUTH_STORAGE=redis")
         return self
 
 

@@ -33,8 +33,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Shared OAuth state for several replicas.
+# Shared, encrypted OAuth state for several replicas or serverless. The container image includes both.
 redis = ["py-key-value-aio[redis]>=0.4.6"]
+dynamodb = ["py-key-value-aio[dynamodb]>=0.4.6"]
+cloud = ["mcp-jira[redis,dynamodb]"]
 
 [project.urls]
 Repository = "https://github.com/andriitk/mcp-jira"

@@ -103,16 +103,28 @@ def current_caller() -> Caller:
     )
 
 
-def _client_storage(settings: Settings):
-    """Shared encrypted OAuth state for several replicas; None = FastMCP's encrypted local files."""
+def build_client_storage(settings: Settings):
+    """Shared OAuth state (Redis or DynamoDB), Fernet-encrypted; None = FastMCP's encrypted local files."""
     storage = settings.storage
-    if not storage.redis_url.get_secret_value():
-        return None
-    from key_value.aio.stores.redis import RedisStore
+    match storage.backend:
+        case "file":
+            return None
+        case "redis":
+            from key_value.aio.stores.redis import RedisStore
+
+            store = RedisStore(url=storage.redis_url.get_secret_value())
+        case "dynamodb":
+            from key_value.aio.stores.dynamodb import DynamoDBStore
+
+            store = DynamoDBStore(
+                table_name=storage.dynamodb_table,
+                region_name=storage.dynamodb_region or None,
+                endpoint_url=storage.dynamodb_endpoint_url or None,
+            )
     from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
 
     return FernetEncryptionWrapper(
-        key_value=RedisStore(url=storage.redis_url.get_secret_value()),
+        key_value=store,
         fernet=Fernet(storage.encryption_key.get_secret_value().encode()),
         raise_on_decryption_error=False,
     )
@@ -138,7 +150,7 @@ def build_atlassian_provider(settings: Settings) -> OAuthProxy:
         forward_pkce=False,
         forward_resource=False,
         allowed_client_redirect_uris=atlassian.redirect_patterns,
-        client_storage=_client_storage(settings),
+        client_storage=build_client_storage(settings),
         jwt_signing_key=atlassian.jwt_signing_key.get_secret_value() or None,
         require_authorization_consent=True if atlassian.consent == "always" else "remember",
         enable_cimd=atlassian.enable_cimd,

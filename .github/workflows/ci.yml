@@ -28,7 +28,7 @@ jobs:
           version: "0.13.7"
           python-version: ${{ matrix.python }}
           enable-cache: true
-      - run: uv sync --locked --extra redis
+      - run: uv sync --locked --extra cloud
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pytest -p no:cacheprovider
